@@ -1,0 +1,284 @@
+---
+title: "Spotify Project"
+author: "David Manojlovic"
+date: "2024-04-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE}
+#libraries
+library(ALSM)
+library(car)
+library(fmsb)
+library(lmtest)
+library(MASS)
+library(onewaytests)
+```
+
+```{r, echo=FALSE}
+# Read the dataset
+data <- read.csv("spotify-2023.csv")
+data$streams <- as.numeric(data$streams)
+data$key <- as.factor(data$key)
+data <- na.omit(data)
+```
+
+
+```{r, echo=FALSE}
+bpm = data$bpm #X1
+dance = data$danceability_. #X2
+valence = data$valence_. #X3
+acoustic = data$acousticness_. #X4
+streams = data$streams #Y
+n = 952
+p = 5
+alpha = 0.05
+
+fullmodel = lm(streams~bpm+dance+valence+acoustic) #Y = b0 + (b1*X1) + (b2*X2) + (b3*X3) + (b4*X4) + e
+#reduced model: Y = b0 + e
+```
+
+
+```{r, echo=FALSE}
+#Pairwise Scatter plots
+plot(fullmodel)
+plot(data[,c(9,15, 18, 19, 21)]) 
+cor(data[,c(9,15, 18, 19, 21)])
+```
+
+
+```{r, echo=FALSE}
+#Matrix
+Y = as.matrix(streams)
+
+Intercept = rep(1,n) 
+X = cbind(Intercept, bpm, dance, valence, acoustic)
+
+xty = t(X)%*%streams
+xtx = t(X)%*%X
+xtxinv = solve(xtx)
+
+b = xtxinv %*% xty
+H = X %*% xtxinv %*% t(X)
+
+J = matrix(1, n, n)
+I = diag(n)
+SSR = t(Y) %*% (H - (1/n)*J) %*% Y
+SSE = t(Y) %*% (I - H) %*% Y
+SST = t(Y) %*% (I - (1/n)*J) %*% Y
+
+Yhat = X %*% b
+e = Y-Yhat
+MSE = drop(SSE / (n-p)) #drop allows the 1x1 matrix to be a scalar
+
+vc_e = MSE * (I-H)
+vc_b = MSE * xtxinv
+Fvc = qf(0.95, p-1, n-p)
+Fvs = drop(SSR)/MSE
+``` 
+
+
+```{r, echo=FALSE}
+#Confidence Intervals for predicting 4 betas with Bonferroni and WH
+g = 4
+B = qt(1-(alpha/(2*g)), df=n-p)
+W = sqrt(p*qf(1-alpha, p, n-p))
+
+sb1 = 4.418770e+11
+sb2 = 2.054183e+12
+sb3 = 740419539271
+sb4 = 5.270719e+11
+
+b1_CIB_L = b[2] - B * sb1
+b1_CIB_U = b[2] + B * sb1
+b1_CIW_L = b[2] - W * sb1
+b1_CIW_U = b[2] + W * sb1
+  
+b2_CIB_L = b[3] - B * sb2
+b2_CIB_U = b[3] + B * sb2
+b2_CIW_L = b[3] - W * sb2
+b2_CIW_U = b[3] + W * sb2
+  
+b3_CIB_L = b[4] - B * sb3
+b3_CIB_U = b[4] + B * sb3
+b3_CIW_L = b[4] - W * sb3
+b3_CIW_U = b[4] + W * sb3
+
+b4_CIB_L = b[5] - B * sb4
+b4_CIB_U = b[5] + B * sb4
+b4_CIW_L = b[5] - W * sb4
+b4_CIW_U = b[5] + W * sb4
+```
+
+
+```{r, echo=FALSE}
+#GLT Test
+summary(fullmodel)
+anova(fullmodel) #type 1
+Anova(fullmodel, type="II")
+anova(lm(streams~as.factor(bpm+dance+valence+acoustic)))
+sseR = (3.0177e+20)+1.8162e+15+3.4979e+18+6.7959e+15+3.0391e+17#SST = SSE+SSR
+dfeR = n-1
+sseF = 3.0177e+20 #SSE
+dfeF = n-p
+
+Fs = ((sseR-sseF)/(dfeR-dfeF) ) / (sseF/dfeF) #((sseR-sseF)/(dfeR-dfeF) ) / (sseF/dfeF) = MSR/MSE
+Fc = qf(0.95, dfeR-dfeF, dfeF) 
+pval = pf(Fs, dfeR-dfeF, dfeF, lower.tail=FALSE)
+```
+
+
+
+```{r, echo=FALSE}
+#Residuals
+resid = residuals(fullmodel)
+
+plot(streams, resid) + abline(h=0) #Y residual plot
+```
+
+
+```{r, echo=FALSE}
+#Lack of Fit
+modelR = lm(streams~bpm+dance+valence+acoustic)
+anova(modelR)
+modelF = lm(streams~as.factor(bpm+dance+valence+acoustic))
+anova(modelR, modelF)
+```
+
+
+```{r, echo=FALSE}
+#Shapiro Test
+shapiro.test(residuals(fullmodel))
+qqnorm(residuals(fullmodel)); qqline(residuals(fullmodel)) #H0: data follow normal
+
+```
+
+
+```{r, echo=FALSE}
+#Breusch-Pagen Test
+bptest(fullmodel) #H0: residuals have constant variance
+```
+
+
+```{r, echo=FALSE}
+#Box-cox Transformation
+bcmle = boxcox(fullmodel, lambda=seq(-2, 10, by=0.1))
+lambda = bcmle$x[which.max(bcmle$y)]
+
+ynew = streams^lambda
+transformed_model = lm(ynew~bpm+dance+valence+acoustic)
+summary(transformed_model)
+anova(transformed_model)
+residnew = residuals(transformed_model)
+plot(streams, residnew) + abline(h=0) #Ynew residual plot
+
+plot(transformed_model)
+#plot(data[,c(9,15, 18, 19, 21)]) 
+#cor(data[,c(9,15, 18, 19, 21)])
+
+
+shapiro.test(residuals(transformed_model))
+qqnorm(residuals(transformed_model)); qqline(residuals(transformed_model)) #H0: data follow normal
+bptest(transformed_model) #H0: residuals have constant variance
+``` 
+
+
+```{r, echo=FALSE}
+#Extra sum of squares
+summary(lm(streams~bpm)) #y~x1
+anova(lm(streams~bpm)) #y~x1
+
+summary(lm(streams~bpm+dance)) #y~x1+x2
+anova(lm(streams~bpm+dance)) #y~x1+x2
+
+summary(lm(streams~bpm+dance+valence)) #y~x1+x2+x3
+anova(lm(streams~bpm+dance+valence)) #y~x1+x2+x3
+
+summary(lm(streams~bpm+dance+valence+acoustic)) #y~x1+x2+x3+x4
+anova(lm(streams~bpm+dance+valence+acoustic)) #y~x1+x2+x3+x4
+
+
+```
+
+
+```{r, echo=FALSE}
+#Best Subsets
+avPlots(fullmodel)
+BestSub(data[,c(15, 18, 19, 21)], streams, num=3)
+
+```
+
+```{r, echo=FALSE}
+#Cook's
+cook = cooks.distance(fullmodel)
+cookmajor = qf(0.5, p, n-p)
+cookminor = qf(0.2, p, n-p)
+cook_inf_pt_major = ifelse(cook > cookmajor, 1, 0)
+cook_inf_pt_minor = ifelse(cook > cookminor, 1, 0)
+filter(cook_inf_pt_major, cook_inf_pt_major==0)
+```
+
+
+```{r, echo=FALSE}
+#K-fold cross validation
+
+```
+
+
+
+
+
+```{r, echo=FALSE}
+#DFBETA
+dfbeta = dfbetas(fullmodel)
+dfbeta_inf_pt1 = ifelse(((abs(dfbeta[,2])>(2/sqrt(n)))&(abs(dfbeta[,3])>(2/sqrt(n)))
+                         &(abs(dfbeta[,4])> (2/sqrt(n)))&(abs(dfbeta[,5])>(2/sqrt(n))) ), 1, 0)
+```
+
+
+```{r, echo=FALSE}
+#DFFIT
+dffit = dffits(fullmodel)
+dffit_inf_pt = ifelse(abs(dffit) > 2*sqrt(p/n), 1, 0) #0 means not influential
+```
+
+
+```{r, echo=FALSE}
+#VIF
+vif(fullmodel)
+
+```
+
+
+```{r, echo=FALSE}
+#Influenctial points function
+influencePlot(fullmodel)
+lm.influence(fullmodel)$hat #
+```
+
+
+```{r, echo=FALSE}
+#
+
+```
+
+
+```{r, echo=FALSE}
+#
+
+```
+
+
+
+
+
+
+
+
+
+
+
