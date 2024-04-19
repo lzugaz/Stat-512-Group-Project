@@ -9,6 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
 ```{r, echo=FALSE}
 #libraries
 library(ALSM)
@@ -17,7 +18,13 @@ library(fmsb)
 library(lmtest)
 library(MASS)
 library(onewaytests)
+library(boot)
+library(lmridge)
+library(quantreg)
+library(leaps)
+library(caret)
 ```
+
 
 ```{r, echo=FALSE}
 # Read the dataset
@@ -40,6 +47,8 @@ alpha = 0.05
 
 fullmodel = lm(streams~bpm+dance+valence+acoustic) #Y = b0 + (b1*X1) + (b2*X2) + (b3*X3) + (b4*X4) + e
 #reduced model: Y = b0 + e
+
+spotify = data.frame(streams = streams, bpm = bpm, dance = dance, valence = valence, acoustic = acoustic)
 ```
 
 
@@ -49,6 +58,217 @@ plot(fullmodel)
 plot(data[,c(9,15, 18, 19, 21)]) 
 cor(data[,c(9,15, 18, 19, 21)])
 ```
+
+
+```{r, echo=FALSE}
+#VIF (>10)
+VIF(lm(bpm~dance+valence+acoustic))
+VIF(lm(dance~bpm+valence+acoustic))
+VIF(lm(valence~bpm+dance+acoustic))
+VIF(lm(acoustic~bpm+dance+valence))
+```
+
+
+
+
+
+
+
+
+```{r, echo=FALSE}
+#Residuals
+resid = residuals(fullmodel)
+
+plot(fitted.values, resid) + abline(h=0) #Y residual plot
+hist(residuals(fullmodel), main="Histogram of Residuals", xlab="Residuals", breaks=30, col="lightblue")
+
+hist(bpm, main="Histogram of BPM", xlab="BPM", breaks=30, col="lightgreen")# Histogram of bpm
+qqnorm(bpm); qqline(bpm, col="red") # Q-Q plot of bpm
+
+hist(dance, main="Histogram of danceability", xlab="danceability", breaks=30, col="lightblue")# Histogram of dance
+qqnorm(dance); qqline(dance, col="red") # Q-Q plot of dance
+
+hist(valence, main="Histogram of valence", xlab="valence", breaks=30, col="pink")# Histogram of valence
+qqnorm(valence); qqline(valence, col="red") # Q-Q plot of valence
+
+hist(acoustic, main="Histogram of acoustic", xlab="acoustic", breaks=30, col="lightyellow")# Histogram of acoustic
+qqnorm(acoustic); qqline(acoustic, col="red") # Q-Q plot of acoustic
+
+
+```
+
+
+```{r, echo=FALSE}
+#Shapiro Test
+shapiro.test(residuals(fullmodel))
+qqnorm(residuals(fullmodel)); qqline(residuals(fullmodel)) #H0: data follow normal
+
+shapiro.test(residuals(lm(streams~bpm)))
+qqnorm(residuals(lm(streams~bpm))); qqline(residuals(lm(streams~bpm))) #H0: data follow normal
+shapiro.test(residuals(lm(streams~dance)))
+qqnorm(residuals(lm(streams~dance))); qqline(residuals(lm(streams~dance))) #H0: data follow normal
+shapiro.test(residuals(lm(streams~valence)))
+qqnorm(residuals(lm(streams~valence))); qqline(residuals(lm(streams~valence))) #H0: data follow normal
+shapiro.test(residuals(lm(streams~acoustic)))
+qqnorm(residuals(lm(streams~acoustic))); qqline(residuals(lm(streams~acoustic))) #H0: data follow normal
+```
+
+
+```{r, echo=FALSE}
+#Breusch-Pagen Test
+bptest(fullmodel) #H0: residuals have constant variance
+```
+
+
+```{r, echo=FALSE}
+#Box-cox Transformation
+bcmle = boxcox(fullmodel, lambda=seq(-2, 10, by=0.1))
+lambda = bcmle$x[which.max(bcmle$y)]
+
+streamsnew = streams^lambda
+spotify$streamsnew=streamsnew
+transformed_model = lm(streamsnew~bpm+dance+valence+acoustic)
+summary(transformed_model)
+anova(transformed_model)
+residnew = residuals(transformed_model)
+
+shapiro.test(residuals(transformed_model))
+qqnorm(residuals(transformed_model)); qqline(residuals(transformed_model)) #H0: data follow normal
+bptest(transformed_model) #H0: residuals have constant variance
+``` 
+
+
+
+
+
+```{r, echo=FALSE}
+#Best Subsets
+avPlots(fullmodel)
+BestSub(data[,c(15, 18, 19, 21)], streams, num=1)
+
+```
+
+
+```{r, echo=FALSE}
+#Cook's 
+cook = cooks.distance(fullmodel)
+cookmajor = qf(0.5, p, n-p)
+cookminor = qf(0.2, p, n-p)
+cook_inf_pt_major = ifelse(cook > cookmajor, 1, 0)
+cook_inf_pt_minor = ifelse(cook > cookminor, 1, 0)
+summary(cook_inf_pt_major)
+summary(cook_inf_pt_major)
+```
+
+```{r, echo=FALSE}
+#DFBETA (2/sqrt(n))
+dfbeta = dfbetas(fullmodel)
+dfbeta_inf_pt1 = ifelse(((abs(dfbeta[,2])>(2/sqrt(n)))&(abs(dfbeta[,3])>(2/sqrt(n)))
+                         &(abs(dfbeta[,4])> (2/sqrt(n)))&(abs(dfbeta[,5])>(2/sqrt(n))) ), 1, 0)
+```
+
+```{r, echo=FALSE}
+#DFFIT (2*sqrt(p/n))
+dffit = dffits(fullmodel)
+dffit_inf_pt = ifelse(abs(dffit) > 2*sqrt(p/n), 1, 0) #0 means not influential
+```
+
+
+```{r, echo=FALSE}
+#Influenctial points function
+influencePlot(fullmodel)
+#influencePlot(transformed_model)
+#lm.influence(fullmodel)$hat #
+
+qt(1-0.05/(2*n), n-1-p) #B for studres = 
+2*p/n #hat outlier = 
+qf(0.5, p, n-p)
+qf(0.2, p, n-p)
+```
+
+```{r, echo=FALSE}
+#K-fold cross validation
+set.seed(123)
+train.control=trainControl(method="cv", number=10)
+step.model1 = train(streams~bpm+dance+valence+acoustic, 
+                        data=spotify, method="leapBackward", tuneGrid=data.frame(nvmax=4), trControl=train.control)
+step.model1$results
+
+
+folds <- createFolds(spotify$streams, k = 10)
+cv_results <- lapply(folds, function(x) {
+  training_set <- spotify[-x, ]
+  test_set <- spotify[x, ]
+  model <- lm(streams ~ dance, data = training_set)
+  return(mean((predict(model, test_set) - test_set$streams)^2))  # returning MSE for each fold
+})
+mean(unlist(cv_results))  # average MSE across all folds
+
+cv_results2 <- lapply(folds, function(x) {
+  training_set <- spotify[-x, ]
+  test_set <- spotify[x, ]
+  model <- lm(streams ~ bpm+dance+valence+acoustic, data = training_set)
+  return(mean((predict(model, test_set) - test_set$streams)^2))  # returning MSE for each fold
+})
+mean(unlist(cv_results2))  # average MSE across all folds
+```
+
+
+```{r, echo=FALSE}
+#Bootstrapping OLS
+
+boot.olscoef <- function(data, indices, maxit=20) {
+  data <- data[indices,]
+  data.mod<-lm(streams~bpm+dance+valence+acoustic, data)
+  return(coef(data.mod))
+}
+
+ols_model_bootcoeff <- boot(data=spotify, statistic = boot.olscoef, R=100, maxit=20)
+
+# 95% confidence intervals
+boot.ci(ols_model_bootcoeff, type="perc", index=2) #bpm
+boot.ci(ols_model_bootcoeff, type="perc", index=3) #dance
+boot.ci(ols_model_bootcoeff, type="perc", index=4) #valence
+boot.ci(ols_model_bootcoeff, type="perc", index=5) #acoustic
+
+
+#Boostrapping with Robust
+boot.robustcoef <- function(data, indices, maxit=20) {
+  data <- data[indices,]
+data.mod<-rlm(streams~bpm+dance+valence+acoustic, data, psi=psi.bisquare)
+  return(coef(data.mod))
+}
+robust_model_bootcoeff <- boot(data=spotify, statistic = boot.robustcoef, R=100, maxit=20)
+
+# 95% confidence intervals
+boot.ci(robust_model_bootcoeff, type="perc", index=1) #b0
+boot.ci(robust_model_bootcoeff, type="perc", index=2) #bpm
+boot.ci(robust_model_bootcoeff, type="perc", index=3) #dance
+boot.ci(robust_model_bootcoeff, type="perc", index=4) #valence
+boot.ci(robust_model_bootcoeff, type="perc", index=5) #acoustic
+
+
+#Bootstrapping OLS with only danceability
+boot.olsdancecoef <- function(data, indices, maxit=20) {
+  data <- data[indices,]
+  data.mod<-lm(streams~dance, data)
+  return(coef(data.mod))
+}
+
+olsdance_model_bootcoeff <- boot(data=spotify, statistic = boot.olsdancecoef, R=100, maxit=20)
+
+# 95% confidence intervals
+boot.ci(olsdance_model_bootcoeff, type="perc", index=2) #dance
+
+
+summary(rlm(streams~bpm+dance+valence+acoustic, spotify, psi=psi.bisquare))
+summary(lm(streams~bpm+dance+valence+acoustic, spotify))
+summary(rlm(streamsnew~bpm+dance+valence+acoustic, spotify, psi=psi.bisquare))
+summary(lm(streamsnew~bpm+dance+valence+acoustic, spotify))
+```
+
+
+
 
 
 ```{r, echo=FALSE}
@@ -80,7 +300,6 @@ vc_b = MSE * xtxinv
 Fvc = qf(0.95, p-1, n-p)
 Fvs = drop(SSR)/MSE
 ``` 
-
 
 ```{r, echo=FALSE}
 #Confidence Intervals for predicting 4 betas with Bonferroni and WH
@@ -114,6 +333,46 @@ b4_CIW_L = b[5] - W * sb4
 b4_CIW_U = b[5] + W * sb4
 ```
 
+```{r, echo=FALSE}
+#Extra sum of squares
+summary(lm(streams~bpm)) #y~x1
+summary(lm(streams~dance)) #y~x2
+summary(lm(streams~valence)) #y~x3
+summary(lm(streams~acoustic)) #y~x4
+summary(lm(streams~dance+bpm)) #y~x2+x1
+summary(lm(streams~dance+bpm+valence)) #y~x2+x1+x3
+summary(lm(streams~dance+bpm+valence+acoustic)) #y~x2+x1+x3+x4
+summary(lm(streams~dance+bpm+acoustic)) #y~x2+x1+x4
+summary(lm(streams~dance+bpm+acoustic+valence)) #y~x2+x1+x4+x3
+
+summary(lm(streams~dance+valence)) #y~x2+x3
+summary(lm(streams~dance+valence+bpm)) #y~x2+x3+x1
+summary(lm(streams~dance+valence+bpm+acoustic)) #y~x2+x3+x1+x4
+summary(lm(streams~dance+valence+acoustic)) #y~x2+x3+x4
+summary(lm(streams~dance+valence+acoustic+bpm)) #y~x2+x3+x4+x1
+
+summary(lm(streams~dance+acoustic)) #y~x2+x4
+summary(lm(streams~dance+acoustic+bpm)) #y~x2+x4+x1
+summary(lm(streams~dance+acoustic+bpm+valence)) #y~x2+x4+x1+x3
+summary(lm(streams~dance+acoustic+valence)) #y~x2+x4+x3
+summary(lm(streams~dance+acoustic+valence+bpm)) #y~x2+x4+x3+x1
+
+
+summary(lm(streams~bpm+dance)) #y~x1+x2
+summary(lm(streams~bpm+dance+valence)) #y~x1+x2+x3
+summary(lm(streams~bpm+dance+valence+acoustic)) #y~x1+x2+x3+x4
+summary(lm(streams~dance+bpm+valence+acoustic)) #y~x2+x1+x3+x4
+
+summary(lm(streams~bpm+valence+acoustic)) #y~x1+x3+x4
+```
+
+```{r, echo=FALSE}
+#Lack of Fit
+modelR = lm(streams~bpm+dance+valence+acoustic)
+anova(modelR)
+modelF = lm(streams~as.factor(bpm+dance+valence+acoustic))
+anova(modelR, modelF)
+```
 
 ```{r, echo=FALSE}
 #GLT Test
@@ -129,156 +388,9 @@ dfeF = n-p
 Fs = ((sseR-sseF)/(dfeR-dfeF) ) / (sseF/dfeF) #((sseR-sseF)/(dfeR-dfeF) ) / (sseF/dfeF) = MSR/MSE
 Fc = qf(0.95, dfeR-dfeF, dfeF) 
 pval = pf(Fs, dfeR-dfeF, dfeF, lower.tail=FALSE)
+
+fitted.values <- fitted(fullmodel)# Calculate fitted values
 ```
-
-
-
-```{r, echo=FALSE}
-#Residuals
-resid = residuals(fullmodel)
-
-plot(streams, resid) + abline(h=0) #Y residual plot
-```
-
-
-```{r, echo=FALSE}
-#Lack of Fit
-modelR = lm(streams~bpm+dance+valence+acoustic)
-anova(modelR)
-modelF = lm(streams~as.factor(bpm+dance+valence+acoustic))
-anova(modelR, modelF)
-```
-
-
-```{r, echo=FALSE}
-#Shapiro Test
-shapiro.test(residuals(fullmodel))
-qqnorm(residuals(fullmodel)); qqline(residuals(fullmodel)) #H0: data follow normal
-
-```
-
-
-```{r, echo=FALSE}
-#Breusch-Pagen Test
-bptest(fullmodel) #H0: residuals have constant variance
-```
-
-
-```{r, echo=FALSE}
-#Box-cox Transformation
-bcmle = boxcox(fullmodel, lambda=seq(-2, 10, by=0.1))
-lambda = bcmle$x[which.max(bcmle$y)]
-
-ynew = streams^lambda
-transformed_model = lm(ynew~bpm+dance+valence+acoustic)
-summary(transformed_model)
-anova(transformed_model)
-residnew = residuals(transformed_model)
-plot(streams, residnew) + abline(h=0) #Ynew residual plot
-
-plot(transformed_model)
-#plot(data[,c(9,15, 18, 19, 21)]) 
-#cor(data[,c(9,15, 18, 19, 21)])
-
-
-shapiro.test(residuals(transformed_model))
-qqnorm(residuals(transformed_model)); qqline(residuals(transformed_model)) #H0: data follow normal
-bptest(transformed_model) #H0: residuals have constant variance
-``` 
-
-
-```{r, echo=FALSE}
-#Extra sum of squares
-summary(lm(streams~bpm)) #y~x1
-anova(lm(streams~bpm)) #y~x1
-
-summary(lm(streams~bpm+dance)) #y~x1+x2
-anova(lm(streams~bpm+dance)) #y~x1+x2
-
-summary(lm(streams~bpm+dance+valence)) #y~x1+x2+x3
-anova(lm(streams~bpm+dance+valence)) #y~x1+x2+x3
-
-summary(lm(streams~bpm+dance+valence+acoustic)) #y~x1+x2+x3+x4
-anova(lm(streams~bpm+dance+valence+acoustic)) #y~x1+x2+x3+x4
-
-
-```
-
-
-```{r, echo=FALSE}
-#Best Subsets
-avPlots(fullmodel)
-BestSub(data[,c(15, 18, 19, 21)], streams, num=3)
-
-```
-
-```{r, echo=FALSE}
-#Cook's
-cook = cooks.distance(fullmodel)
-cookmajor = qf(0.5, p, n-p)
-cookminor = qf(0.2, p, n-p)
-cook_inf_pt_major = ifelse(cook > cookmajor, 1, 0)
-cook_inf_pt_minor = ifelse(cook > cookminor, 1, 0)
-filter(cook_inf_pt_major, cook_inf_pt_major==0)
-```
-
-
-```{r, echo=FALSE}
-#K-fold cross validation
-
-```
-
-
-
-
-
-```{r, echo=FALSE}
-#DFBETA
-dfbeta = dfbetas(fullmodel)
-dfbeta_inf_pt1 = ifelse(((abs(dfbeta[,2])>(2/sqrt(n)))&(abs(dfbeta[,3])>(2/sqrt(n)))
-                         &(abs(dfbeta[,4])> (2/sqrt(n)))&(abs(dfbeta[,5])>(2/sqrt(n))) ), 1, 0)
-```
-
-
-```{r, echo=FALSE}
-#DFFIT
-dffit = dffits(fullmodel)
-dffit_inf_pt = ifelse(abs(dffit) > 2*sqrt(p/n), 1, 0) #0 means not influential
-```
-
-
-```{r, echo=FALSE}
-#VIF
-vif(fullmodel)
-
-```
-
-
-```{r, echo=FALSE}
-#Influenctial points function
-influencePlot(fullmodel)
-lm.influence(fullmodel)$hat #
-```
-
-
-```{r, echo=FALSE}
-#
-
-```
-
-
-```{r, echo=FALSE}
-#
-
-```
-
-
-
-
-
-
-
-
 
 
 
