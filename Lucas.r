@@ -33,7 +33,7 @@ qqnorm(data$energy_)
 qqline(data$energy_, col="red")
 
 # Histogram of 'liveness_'
-hist(data$liveness_, main="Histogram of Liveness", xlab="Liveness", breaks=30, col="lightcoral")
+hist(data$liveness_, main="Histogram of Liveness", xlab="Liveness", breaks=40, col="lightcoral")
 
 # Q-Q plot of 'liveness_'
 qqnorm(data$liveness_)
@@ -79,3 +79,64 @@ influencePlot(model)
 library(lmtest)
 dw_test <- dwtest(model)
 print(dw_test)
+
+library(lmtest)
+bptest(model)
+
+
+
+
+
+
+
+# Cook distance
+cooksd <- cooks.distance(model)
+plot(cooksd, type="h", main="Cook's Distance", ylab="Cook's distance")
+abline(h=4/(nrow(data)-length(coef(model))), col="red")  # Threshold line
+
+
+
+
+#box cox transformaiton 
+
+library(MASS)  # Load MASS for the boxcox function
+boxcox_result <- boxcox(model, lambda = seq(-2, 2, by=0.1))
+lambda_opt <- boxcox_result$x[which.max(boxcox_result$y)]
+data$streams_transformed <- data$streams^lambda_opt
+transformed_model <- lm(streams_transformed ~ energy_. + liveness_. + key + energy_.*liveness_., data = data)
+summary(transformed_model)
+
+
+
+
+
+#Kfold 
+
+library(caret)
+set.seed(123)  # for reproducibility
+folds <- createFolds(data$streams, k = 10)
+cv_results <- lapply(folds, function(x) {
+  training_set <- data[-x, ]
+  test_set <- data[x, ]
+  model <- lm(streams ~ energy_. + liveness_. + key, data = training_set)
+  return(mean((predict(model, test_set) - test_set$streams)^2))  # returning MSE for each fold
+})
+mean(unlist(cv_results))  # average MSE across all folds
+
+
+
+#DFBETA and DFFITS
+
+dfbetas_values <- dfbetas(model)
+plot(dfbetas_values, main="DFBETAs", ylab="DFBETAs values")
+
+dffits_values <- dffits(model)
+plot(dffits_values, type="h", main="DFFITS", ylab="DFFITS values")
+abline(h=c(-2, 2) * sqrt(2/length(data$streams)), col="red")  # Threshold lines
+
+
+
+# Variance Inflation Factor
+library(car)
+vif_values <- vif(model)
+print(vif_values)  # Print VIF values to check for multicollinearity
